@@ -1,0 +1,19 @@
+{
+  "name": "blu-hue-bot",
+  "version": "1.0.0",
+  "description": "A bot that can control a phillips hue through Octoblu!",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/octoblu/blu-hue-bot.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/octoblu/blu-hue-bot/issues"
+  },
+  "homepage": "https://github.com/octoblu/blu-hue-bot#readme"
+}
