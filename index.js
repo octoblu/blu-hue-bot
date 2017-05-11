@@ -28,14 +28,15 @@ IntentDialog handles how the bot identifies different intents during a chat
 */
 const intents = new IntentDialog();
 
-// some specified intents. When intent is triggered, the bot will be directed to corresponding networks
+// some specified intents. When intent is triggered, the bot will be directed to corresponding dialog
 intents.matches(/^commands/i, '/commands');
-intents.matches(/^setup/i, '/authentication');
+intents.matches(/^setup/i, '/octobluDevSetup');
 
 /**
 currentUser is a function that is triggered when the bot is initiated. It checks if a user already exists or not and directs the bot accordingly.
 */
 const currentUser = (session) => {
+  console.log(session.userData.name);
   if (!session.userData.name) {
     // start a new chat if current user doesn't exists
     session.beginDialog('/intro')
@@ -46,11 +47,13 @@ const currentUser = (session) => {
   }
 }
 
+bot.dialog('/', currentUser);
+
 /**
 A welcome greetings displayed to new users
 */
 const intro = (session) => {
-  builder.Prompts.text(session, "Hi there, I'm HueBot. What's your name?")
+  builder.Prompts.text(session, "Hi there, I'm HueBot. What's your name?");
 }
 
 const isDev = (session, results) => {
@@ -58,50 +61,73 @@ const isDev = (session, results) => {
   session.send('Hi ' + session.userData.name + ', let\'s get you setup.');
   session.sendTyping();
   builder.Prompts.choice(session, "are you an octoblu developer?", ["what do you mean?", "I sure am!"]);
-  results.response == "I sure am!" ? session.beginDialog('/octobluDev') : session.beginDialog('/notOctobludev');
 }
+
+const checkDev = (session, results) => {
+  results.response.entity == "I sure am!" ? session.beginDialog('/octobluDev') : session.beginDialog('/notOctobludev');
+}
+
+//bot.dialog('/intro',[intro, getCred, authentication, commands] )
+bot.dialog('/intro', [intro, isDev, checkDev]);
 
 const octobluDev = (session) => {
   session.send("Nice!")
-  session.send("Ok so.. for me to do all the magic octoblu stuff, I need a currently running computer and access to a Philips Hue Light connector");
   session.sendTyping();
-  builder.Prompts.choice(session, "Do you have those?", ["what's a connector?", "Yeah, but let me install a connector first", "Yup! I have a computer and a connector installed on it."])
+  session.send("Ok so.. for me to do all the magic octoblu stuff, I need access to a Philips Hue Light connector.");
+  session.sendTyping();
+  builder.Prompts.choice(session, "Do you have one installed on a computer?", ["what's a connector?", "Nope! Need help", "Yup!"])
 }
 
-const devSetupCred = (session, results) => {
-  switch (results.response) {
+const devSetupCred = (session, results, next) => {
+  switch (results.response.entity) {
     case "what's a connector?":
       session.send("A connector allows me to interact with Philips Hue Light through Octoblu");
       session.sendTyping();
       session.send("Let's get you setup with one.");
       session.beginDialog('/octobluDevSetup');
       break;
-    case "Yeah, but let me install a connector first":
-      builder.Prompts.choice(session, "Well, I can help with that!", ["No thanks", "yes please"])
-      results.response == "No thanks" ? next() : session.beginDialog('/octobluDevSetup');
+    case "Nope! Need help":
+      session.send("I can help with setting up a connector.")
+      session.beginDialog('/octobluDevSetup');
       break;
-    case "Yup! I have a computer and a connector installed on it.":
+    case "Yup!":
       session.send("Great! Fire some commands at me");
-      next();
       break;
     default:
       //TODO: call universal intent
   }
-}
-
-const octobluDevCommands = (session, results) => {
-  //TODO: create intents to match possible commands
-}
-
-const notOctobludev = (session) => {
-  session.send("Well, Octoblu is a service programmers use make different devices interact with each other. You find more info https://octoblu.com");
   next();
 }
 
-const isProgrammer = (session) => {
-  session.sendTyping();
+const octobluDevCommands = (session, results, next) => {
+  session.send("Waiting for commands");
+  //TODO: create intents to match possible commands
+}
+
+bot.dialog('/octobluDev', [octobluDev, devSetupCred, octobluDevCommands]);
+
+const notOctobludev = (session, results) => {
+  session.send("Well, Octoblu is a service programmers use make different devices interact with each other. You find more info https://octoblu.com");
   builder.Prompts.choice(session, "Are you a programmer?", ["Yes", "No"]);
-  results.response == "Yes" ? session.beginDialog('/becomeOctobluDev') : session.beginDialog('/nonDevSetup');
+}
+
+const isProgrammer = (session, results) => {
+  switch (results.response.entity) {
+    case 'Yes':
+      //TODO: sign up to be octoblu dev, replace dialog w/ '/octobluDev'
+      break;
+    case 'no':
+      //TODO: get ip address
+      break;
+    default:
+
+  }
+}
+
+bot.dialog('/notOctobludev', [notOctobludev, isProgrammer]);
+
+const checkProgrammer = (session, results) => {
+  results.response.entity == "Yes" ? session.beginDialog('/becomeOctobluDev') : session.beginDialog('/nonDevSetup');
 }
 
 const nonDevSetup = (session) => {
@@ -112,81 +138,6 @@ const nonDevSetup = (session) => {
   builder.Prompts.choice(session, "Do you know how to get it?", ["duh! I do.", "Not really"])
 }
 
-const getBridgeIPAddress = (session, results) => {
-  switch (results.response) {
-    case "duh! I do.":
-      builder.Prompts.number(session, "Great! What is it?")
-      session.dialogData.brigdeIpAddress = results.response;
-      break;
-    case "Not really":
-      session.send("ok. I can help you find it.")
-      session.beginDialog('/findBrigdeIPAddress');
-      break;
-    default:
-      //TODO:
-  }
-  //TODO: make get request to confirm IP address
-}
-
-const findBrigdeIPAddress = (session) => {
-  session.send("To get the IP address, you need the official Philips Hue app.")
-  builder.Prompts.choice(session, "Do you have the app?", "yes|no")
-  if (results.response == "yes") {
-    session.send("That's good! Now go to the settings menu in the app. Go to My Bridge. Go to Network settings. Switch off the DHCP toggle. The IP address of the bridge will show.")
-    builder.Prompts.choice(session, "did you find it?", ["yup! that was easy", "no! I'm lost"])
-    if (results.response == "yup! that was easy") {
-      builder.Prompts.number(session, "Sweeet! what's the address?")
-      session.dialogData.brigdeIpAddress = results.response;
-      session.endDialogWithResult(session.dialogData.brigdeIpAddress);
-    }
-    else {
-      session.send("Please make sure you follow the instructions closely")
-      session.sendTyping();
-      builder.Prompts.number(session, "What's the address?")
-      session.dialogData.brigdeIpAddress = results.response;
-      session.endDialogWithResult(session.dialogData.brigdeIpAddress);
-    }
-  }
-  else {
-    session.send("Download the official and make sure your phone is connected to the same network as the Hue bridge")
-    builder.Prompts.choice("have you downloaded it?", ["yup!", "Nope"])
-    if (results.response == "yup!") {
-      session.send("That's good! Now go to the settings menu in the app. Go to My Bridge. Go to Network settings. Switch off the DHCP toggle. The IP address of the bridge will show.")
-      builder.Prompts.choice(session, "did you find it?", ["yup! that was easy", "no! I'm lost"])
-      if (results.response == "yup! that was easy") {
-        builder.Prompts.number(session, "Sweeet! what's the address?")
-        session.dialogData.brigdeIpAddress = results.response;
-        session.endDialogWithResult(session.dialogData.brigdeIpAddress);
-      }
-      else {
-        session.send("Please make sure you follow the instructions closely")
-        session.sendTyping();
-        builder.Prompts.number(session, "What's the address?")
-        session.dialogData.brigdeIpAddress = results.response;
-        session.endDialogWithResult(session.dialogData.brigdeIpAddress);
-      }
-    }
-    else {
-      builder.Prompts.choice(session, "ok, let me know when you've downloaded it", "Done!")
-      if (results.response == "Done!") {
-        session.send("That's good! Now go to the settings menu in the app. Go to My Bridge. Go to Network settings. Switch off the DHCP toggle. The IP address of the bridge will show.")
-        builder.Prompts.choice(session, "did you find it?", ["yup! that was easy", "no! I'm lost"])
-        if (results.response == "yup! that was easy") {
-          builder.Prompts.number(session, "Sweeet! what's the address?")
-          session.dialogData.brigdeIpAddress = results.response;
-          session.endDialogWithResult(session.dialogData.brigdeIpAddress);
-        }
-        else {
-          session.send("Please make sure you follow the instructions closely")
-          session.sendTyping();
-          builder.Prompts.number(session, "What's the address?")
-          session.dialogData.brigdeIpAddress = results.response;
-          session.endDialogWithResult(session.dialogData.brigdeIpAddress);
-        }
-      }
-    }
-  }
-}
 /**
 Authenticates current user with MeshBlu
 @param {object} results holds user's input from previous function in the waterfall call
@@ -212,48 +163,33 @@ const authentication = (session, results) => {
   // }
 }
 
-const checkCred = (session) => {
-  builder.Prompts.choice(session, "I can walk you through installing a connector. Do you have the email and password associated with octoblu account? No worries! I won't be using your email or password.", "Yes|No");
-}
-
 const linkToConnector = (session, results) => {
-  if (results.response == "Yes") {
-    session.send("Perfect! Go to https://connector-factory.octoblu.com/connectors/create/octoblu/meshblu-connector-hue-light , sign in with your email and password.");
-    session.sendTyping();
-    builder.Prompts.choice(session, "Do you see a page showing a list of versions of Philips Hue Light connectors?", ["Yeah, I do.", "Nope! The link didn't work.", "I've gone past that page."]);
-  }
-  else {
-    //TODO: user doesn't have email and/or password
-    session.send("hmmm")
-  }
+  session.send("Go to https://connector-factory.octoblu.com/connectors/create/octoblu/meshblu-connector-hue-light , sign in with your email and password.");
+  session.sendTyping();
+  builder.Prompts.choice(session, "Do you see a page showing a list of versions of Philips Hue Light connectors?", ["Yeah, I do.", "Nope! The link didn't work.", "I've gone past that page."]);
 }
 
 const installConnector = (session, results) => {
-  switch (results.response) {
+  switch (results.response.entity) {
     case "Yeah, I do.":
-      session.send("Select a version. Tip: Be a smart one. Choose the latest version.")
-      session.sendTyping();
-      builder.Prompts.choice(session, "Next step: install the connector", ["Ok, but why again?", "No probs"]);
+      session.send("Select a version. Tip: Choose the latest version.");
       break;
     case "Nope! The link didn't work.":
       session.send("oh no, something must have gone wrong");
       break;
     case "I've gone past that page.":
-      builder.Prompts.choice(session, "Did you install the connector yet?", ["No, I was waiting for you to ask.", "You bet I did!", "Still installing"]);
       break;
     default:
       //TODO:
   }
+  // THIS BELOW IS A FREAKING NIGHTMARE
+  // session.send("Next step: install the connector");
+  // next();
+  builder.Prompts.choice(session, "Did you install the connector yet?", ["No, I was waiting for you to ask.", "You bet I did!", "Still installing"]);
 }
 
 const installationHelp = (session, results) => {
-  switch (results.response) {
-    case "Ok, but why again?":
-      session.send("cos I need it. duh!")
-      break;
-    case "No probs":
-      session.send("Good!")
-      break;
+  switch (results.response.entity) {
     case "No, I was waiting for you to ask.":
       session.send("funny!")
       break;
@@ -269,46 +205,102 @@ const installationHelp = (session, results) => {
   builder.Prompts.choice(session, "do you need me to walk you through installation?", "yes|no")
 }
 
-const walkThruInstallation = (session, results) => {
-  if (results.response == "yes") {
+const walkThruInstallation = (session, results, next) => {
+  if (results.response.entity == "yes") {
     session.beginDialog('/installationWalkThru');
   }
   else {
     next();
   }
 }
-const connectorConfiguration = (session, results) => {
-  session.send("Let's configure the connector in Octoblu. I need four things: Brigde IP address of your Hue Light, your account's uuid, connector's uuid and connector's token.");
-  builder.Prompts.text(session, "What's your Philips Hue Light Brigde IP address?")
-  session.dialogData.brigdeIpAddress = results.response;
-  builder.Prompts.text(session, "What's your account's uuid?")
-  session.dialogData.userUuid = results.response;
-  builder.Prompts.text(session, "What's your connector's uuid?")
-  session.dialogData.uuid = results.response;
-  builder.Prompts.text(session, "What's your connector's token? Tip: click 'Generate Token'")
-  session.dialogData.token = results.response;
 
-  //TODO: confirm uuid & token
-  let confirmConnector = {
-    url: 'https://meshblu.octoblu.com/devices/' + session.dialogData.uuid,
-    headers: {
-      'meshblu_auth_uuid' : session.dialogData.uuid,
-      'meshblu_auth_token' : session.dialogData.token
+const getBridgeIPAddress = () => {
+  let bridgeInfo = {}
+  request.get('https://www.meethue.com/api/nupnp', (err, res, body) => {
+    //TODO: if no ip addresses found, throw error
+    let sBody = JSON.parse(body);
+
+    if (sBody.length == 0) {
+      bridgeInfo.error = "No Hue bridges found on this WiFi."
+      return bridgeInfo;
     }
-  }
-
-  let isOwner = false;
-
-  request.get(confirmConnector, (err, res, body) => {
-    if (err) {
-      console.log(err)
-    }
-    else {
-      //TODO parse body and check if user's uuid matches connector's owner uuid
+    for (var i = 0; i < sBody.length; i++) {
+      let ip_add = sBody[i]["internalipaddress"];
+      let url = "http://"+ ip_add + "/api/";
+      bridgeInfo.ipAddress = ip_add;
+      request.post(url, { json: {"devicetype":"my_hue_app#iphone peter"}},(err, res, body) => {
+        //TODO: if none of the bridges is pushed, throw error
+        if (body[0]["success"]) {
+          bridgeInfo.username = body[0]["success"]["username"];
+          return bridgeInfo;
+        }
+      })
     }
   })
+}
 
-  //TODO: configure using MeshBlu
+const connectorConfiguration = (session, results) => {
+  session.send("Let's configure the connector in Octoblu.")
+  session.send("First, I need you to push the button on your Hue Bridge.")
+  let bridgeInfo = getBridgeIPAddress();
+  let IPaddress = bridgeInfo.ipAddress;
+  let userUuid;
+  let connectorUuid;
+  let connectorToken;
+  let configured = false;
+  let isOwner = false;
+
+  do {
+    if (bridgeInfo.error) {
+      session.send(bridgeInfo.error)
+    }
+    else if (!IPaddress) {
+      session.send("Make sure the button is pressed.")
+    }
+    setTimeout(() => {
+      bridgeInfo = getBridgeIPAddress()
+      IPaddress = bridgeInfo.ipAddress;
+    }, 5000)
+  }while (!IPaddress || bridgeInfo.error)
+
+  session.send("Then, I need three things: your account's uuid, connector's uuid and connector's token. Don't worry,");
+
+  do {
+    builder.Prompts.text(session, "What's your account's uuid? You can find it here https://app.octoblu.com/profile")
+    userUuid = results.response;
+    builder.Prompts.text(session, "What's your connector's uuid?")
+    connectorUuid = results.response;
+    builder.Prompts.text(session, "What's your connector's token? Tip: click 'Generate Token'")
+    connectorToken = results.response;
+
+    //TODO: confirm uuid & token
+    let confirmConnector = {
+      method: 'GET',
+      url: 'https://meshblu.octoblu.com/devices/' + connectorUuid,
+      headers: {
+        'meshblu_auth_uuid' : connectorUuid,
+        'meshblu_auth_token' : connectorToken
+      }
+    }
+
+    request(confirmConnector, (err, res, body) => {
+      if (err) {
+        session.send("I ran into problem with the credentials you gave. Please, make sure they are valid.");
+      }
+      else {
+        let vBody = JSON.parse(body);
+        let owneruuid = vBody['devices'][0]['owner'];
+        if (owneruuid == userUuid) {
+          session.send("I've confirmed the connector");
+          isOwner = true;
+        }
+        else {
+          session.send("It seems that you're not the owner of the connector you provided.")
+        }
+      }
+    })
+  } while (!isOwner);
+
   let configCred = {
     method: 'PUT',
     url: 'https://meshblu.octoblu.com/devices/' + session.dialogData.uuid,
@@ -316,20 +308,21 @@ const connectorConfiguration = (session, results) => {
       'meshblu_auth_uuid' : session.dialogData.uuid,
       'meshblu_auth_token' : session.dialogData.token
     },
-    //TODO: pass brigdeIpAddress
+    //TODO: pass brigde username
+    json: {options: {ipAddress: IPaddress}}
   }
 
-  if (isOwner) {
-    request.put(configCred, (err, res, body) => {
-      //TODO: successful??
-    })
-    //TODO: if successful, endDialog(); else
-  }
-  else {
-    session.send("You are not the owner of the uuid you provided")
-    //TODO: ask for new uuid and token
-  }
+  request(configCred, (err, res, body) => {
+    if (err) {
+      session.send("I ran into some problem while configuring your connector")
+    }
+    else {
+      session.endDialog();
+    }
+  })
 }
+
+bot.dialog('/octobluDevSetup', [linkToConnector, installConnector, installationHelp, connectorConfiguration]);
 
 /**
 Displays possible commands users can ask the bot to perform
@@ -349,22 +342,8 @@ const commands = (session) => {
   session.send("")
 }
 
-bot.dialog('/', currentUser);
-//bot.dialog('/intro',[intro, getCred, authentication, commands] )
-bot.dialog('/intro', [intro, isDev]);
-bot.dialog('/octobluDev', [octobluDev, devSetupCred, octobluDevCommands])
-bot.dialog('/notOctobludev', [notOctobludev, isProgrammer])
-bot.dialog('/octobluDevSetup', [checkCred, linkToConnector, installConnector, installationHelp, walkThruInstallation, connectorConfiguration])
 bot.dialog('installationWalkThru', []);
-bot.dialog('/nonDevSetup', [nonDevSetup, getBridgeIPAddress])
-bot.dialog('/findBrigdeIPAddress', [findBrigdeIPAddress])
-
-const health = (req, res) => {
-  res.status(200).send({"online": "true"})
-};
-
-// Just a tester.
-//app.get('/health', health)
+bot.dialog('/nonDevSetup', [nonDevSetup, getBridgeIPAddress]);
 
 app.post('/api/messages', connector.listen())
 
