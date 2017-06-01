@@ -11,6 +11,7 @@ const app = express()
 const request = require('request')
 const _ = require('lodash')
 const async = require('async')
+const email_validator = require('email-validator')
 
 /**
 Creates a connection with botframework
@@ -44,7 +45,13 @@ bot.recognizer({
           intent = {score: 1.0, intent: 'Test'}
           break;
         case 'change light name':
-          intent = {score: 1.0, intent: 'change light name'}
+          intent = {score: 1.0, intent: 'Change Light Name'}
+          break;
+        case 'dev mode':
+          intent = {score: 1.0, intent: 'Dev Mode'}
+          break;
+        case 'switch light':
+        intent = {score: 1.0, intent: 'Switch Light'}
           break;
         default:
       }
@@ -175,21 +182,21 @@ const receiveBridges = (session, args, next) => {
 }
 
 const somethingDiff = (listOfBridges, callback) => {
+  let after = _.after(_.size(listOfBridges), () => {
+    callback('No bridge pushed')
+  })
   _.forEach(listOfBridges, (eachBridge) => {
-    console.log('eachBridge', eachBridge);
+    if (_.find(eachBridge, 'username')) return false
     let url = 'http://' + eachBridge.internalipaddress + '/api/'
-    console.log('url', url)
     request.post(url, {json: {'devicetype': 'blu-hue-bot#bridge'}}, (error, response, body) => {
       if (error) {
         callback(error)
       }
       if (body[0]['success']) {
-        console.log(_.find(body, 'success'))
         eachBridge.username = body[0]['success']['username']
-        console.log(eachBridge.username)
         callback(null, eachBridge)
       }
-      callback('No bridge pushed')
+      else { after() }
     })
   })
 }
@@ -200,15 +207,16 @@ const findUserBridge = (session, results) => {
   async.retry({times: 4, interval: 5000}, thingToRetry, (error, bridgePushed) => {
     if (error) {
         results = {error: error}
+        session.endDialogWithResult(results)
       }
     //  TODO: use '_.filter' to get array of bridges if multiple bridges are pushed
     else {
       results = {
         bridge: bridgePushed
       }
+      session.endDialogWithResult(results)
     }
   })
-  session.endDialogWithResult(results)
 }
 
 bot.dialog('get_user_bridge', [receiveBridges, findUserBridge])
@@ -236,7 +244,6 @@ const getAllLights = (session, callback) => {
     let ipAddress = session.userData.bridgeInfo.internalipaddress
     let username = session.userData.bridgeInfo.username
     let url = 'http://' + ipAddress + '/api/' + username + '/lights'
-    console.log('url', url);
     request.get(url, (error, response, body) => {
       if (error) {
         console.log('error', error);
@@ -248,7 +255,6 @@ const getAllLights = (session, callback) => {
       let listOflights = {}
       //  save the lights locally as {name: 'name', state: 'on|off'}
       _.forEach(responseBody, (value, key) => {
-        console.log('value', value);
         listOflights[key] = {
           'name': value.name,
           'state': (value.state.on === true) ? 'on' : 'off'
@@ -369,8 +375,15 @@ const getNewLightName = (session, results) => {
   let ipAddress = session.userData.bridgeInfo.internalipaddress
   let username = session.userData.bridgeInfo.username
   let url = 'https://' + ipAddress + '/api/' + username + '/lights/' + lightID
+  let options = {
+    url: url,
+    method: 'PUT',
+    json: {
+      "name": newName
+    }
+  }
 
-  request.put(url, {"name": newName}, (error, response, body) => {
+  request(options, (error, response, body) => {
     if (_.find(body, 'success')) {
       session.send('I have successfully change the light\'s name')
     }
@@ -381,15 +394,112 @@ const getNewLightName = (session, results) => {
   })
 }
 
-bot.dialog('change_light_name', [getLightToChange, findLightToChange, getNewLightName]).triggerAction({matches: 'change light name'})
+bot.dialog('change_light_name', [getLightToChange, findLightToChange, getNewLightName]).triggerAction({matches: 'Change Light Name'})
+
+const getLightToSwitch = (session) => {
+  getAllLights(session, () => {
+    builder.Prompts.text(session, 'What\'s the name of the light you want to switch?')
+  })
+}
+
+const findLightToSwitch = (session, results, next) => {
+  let nameOfLight = results.response
+  let listOflights = session.userData.listOflights
+  let foundLight;
+
+  _.forEach(listOflights, (lightProps, lightID) => {
+    if (foundLight) return false
+    if (_.includes(lightProps, nameOfLight)) {
+      foundLight = {
+        id: lightID,
+        props: lightProps
+      }
+    }
+  })
+  if (foundLight) {
+    session.dialogData.foundLight = foundLight
+    next()
+  }
+  else
+  {
+    session.send('I don\'t recognize ' + nameOfLight + ' as one of your light.')
+    session.endDialog()
+  }
+}
 
 const switchLight = (session) => {
+  let light = session.dialogData.foundLight
+  let ipAddress = session.userData.bridgeInfo.internalipaddress
+  let username = session.userData.bridgeInfo.username
+  let url = 'https://' + ipAddress + '/api/' + username + '/lights/' + light.id + '/state'
+  console.log('url', url)
+  let options = {
+    method: 'PUT',
+    url: url,
+    json: {
+      "on": light.props.state === 'on' ? false : true
+    }
+  }
 
+  request(options, (error, response, body) => {
+    console.log('error', error);
+    console.log('body', body);
+    if (_.find(body, 'success')) {
+      session.send('I have successfully switched the light')
+    }
+    else {
+      session.send('I ran into problem while switching the light. Please try again.')
+    }
+    session.endDialog()
+  })
 }
+
+bot.dialog('switch_light', [getLightToSwitch, findLightToSwitch, switchLight]).triggerAction({matches: 'Switch Light'})
+
+const getOctobluEmail = (session) => {
+  //  TODO: verify octoblu account
+  builder.Prompts.text(session, 'What\'s your octoblu email?')
+}
+
+const activateDevMode = (session, results) => {
+  let givenEmail = results.response
+
+  email_validator.validate_async(givenEmail, (error, isValid) => {
+    if (error) {
+      session.send('This email is invalid.')
+    }
+    else {
+      //  TODO: authenticate email with octoblu, if failed -> create new a/c, else -> continue
+      session.userData.devMode = true
+      session.send('Dev Mode is activated.')
+      session.send('I need access to a Hue Light connector. You can create a new one by going to https://connector-factory.octoblu.com/connectors/create/octoblu/meshblu-connector-hue-light')
+      session.beginDialog('get_connector')
+    }
+  })
+}
+
+const getConnUUID = (session) => {
+  builder.Prompts.text(session, 'What\'s the connector\'s id?')
+}
+
+const getConnToken = (session, results) => {
+  validateID(results.response, (error, isValid) => {
+    if (error) {
+      session.send('The UUID is invalid.')
+    }
+    else {
+
+    }
+  })
+}
+
+bot.dialog('get_connector', [getConnUUID, getConnToken]).triggerAction({matches: 'connect connector'})
+
+bot.dialog('activate_dev_mode', [getOctobluEmail, activateDevMode]).triggerAction({matches: 'Dev Mode'})
 
 // For TESTING
 const test = (session) => {
-  console.log('ip address', session.userData.bridgeInfo.internalipaddress);
+
 }
 
 bot.dialog('test', [test]).triggerAction({matches: 'Test'})
