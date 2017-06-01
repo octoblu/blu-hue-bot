@@ -43,6 +43,9 @@ bot.recognizer({
         case 'test':
           intent = {score: 1.0, intent: 'Test'}
           break;
+        case 'change light name':
+          intent = {score: 1.0, intent: 'change light name'}
+          break;
         default:
       }
       done(null, intent)
@@ -65,12 +68,12 @@ const currentUser = (session) => {
   else
   {
     //  for Testing purpose
-    session.userData.name = null
+    session.userData = null
   }
 }
 
 const isSetupSuccessfull = (session, results, next) => {
-  if (results.error) session.endDialog()
+  if (!results.bridge) session.endDialog()
   else { next() }
 }
 
@@ -93,18 +96,19 @@ const setUserName = (session, results, next) => {
 }
 
 const requestBridges = (session) => {
-  session.beginDialog('getBridges')
+  session.beginDialog('get_bridges')
 }
 
 const setUserBridge = (session, results, next) => {
-  if (results.error) {
-    session.send(results.error)
-    session.endDialogWithResult(results)
+  if (results.bridge) {
+    session.userData.bridgeInfo = results.bridge
+    session.send('I found your bridge.')
+    session.endDialog()
   }
   else
   {
-    session.userData.bridgeInfo = results.bridge
-    session.endDialog()
+    session.send(results.error)
+    session.endDialogWithResult(results)
   }
 }
 
@@ -144,7 +148,7 @@ const returnUserBridge = (session, results) => {
   session.endDialogWithResult(results)
 }
 
-bot.dialog('getBridges', [getBridges, returnUserBridge])
+bot.dialog('get_bridges', [getBridges, returnUserBridge])
 
 const wannaSetup = (session) => {
   session.send('I see you haven\'t setup a Hue bridge yet.')
@@ -165,46 +169,46 @@ const toSetup = (session, results) => {
 bot.dialog('no_bridge', [wannaSetup, toSetup, returnUserBridge])
 
 const receiveBridges = (session, args, next) => {
-  session.dialogData.bridges = args
+  session.dialogData.bridges = args.bridges
   session.send('I need you to push the button on your Hue bridge within 30 seconds. This is due to security reasons.')
   next()
 }
 
+const somethingDiff = (listOfBridges, callback) => {
+  _.forEach(listOfBridges, (eachBridge) => {
+    console.log('eachBridge', eachBridge);
+    let url = 'http://' + eachBridge.internalipaddress + '/api/'
+    console.log('url', url)
+    request.post(url, {json: {'devicetype': 'blu-hue-bot#bridge'}}, (error, response, body) => {
+      if (error) {
+        callback(error)
+      }
+      if (body[0]['success']) {
+        console.log(_.find(body, 'success'))
+        eachBridge.username = body[0]['success']['username']
+        console.log(eachBridge.username)
+        callback(null, eachBridge)
+      }
+      callback('No bridge pushed')
+    })
+  })
+}
+
 const findUserBridge = (session, results) => {
   let listOfBridges = session.dialogData.bridges
-
-  async.retry({times: 4, interval: 5000}, (callback, listOfBridges) => {
-    async.each(listOfBridges, (eachBridge, callback) => {
-      let url = 'http://' + eachBridge.internalipaddress + '/api/'
-      request.post(url, {json: {'devicetype': 'blu-hue-bot#' + session.userData.name + ' bridge'}}, (error, response, body) => {
-        if (error) {
-          callback(error)
-        }
-        else if (body[0]['success']) {
-          console.log(_.filter(body, 'success'))
-          eachBridge.username = body[0]['success']
-          callback()
-        }
-        else
-        {
-          callback('No bridge pushed.')
-        }
-      })
-    }, (error) => {
-      if(error) return callback(error)
-      return callback(null, 'Username obtained')
-    })
-  }, (error, results) => {
+  const thingToRetry = async.apply(somethingDiff, listOfBridges)
+  async.retry({times: 4, interval: 5000}, thingToRetry, (error, bridgePushed) => {
     if (error) {
-      results = {error: error}
-      session.endDialogWithResult(results)
-    }
+        results = {error: error}
+      }
     //  TODO: use '_.filter' to get array of bridges if multiple bridges are pushed
-    results = {
-      bridge: _.find(listOfBridges, 'username')
+    else {
+      results = {
+        bridge: bridgePushed
+      }
     }
-    session.endDialogWithResult(results)
   })
+  session.endDialogWithResult(results)
 }
 
 bot.dialog('get_user_bridge', [receiveBridges, findUserBridge])
@@ -231,18 +235,20 @@ const getAllLights = (session, callback) => {
   {
     let ipAddress = session.userData.bridgeInfo.internalipaddress
     let username = session.userData.bridgeInfo.username
-    let url = 'https://' + ipAddress + 'api/' + username + '/lights'
-
+    let url = 'http://' + ipAddress + '/api/' + username + '/lights'
+    console.log('url', url);
     request.get(url, (error, response, body) => {
       if (error) {
-        session.send(error)
+        console.log('error', error);
+        session.send('I ran into problem getting the lights connected to your bridge.')
         return
       }
       //  body contains the list of lights connected to the bridge
-      // let responseBody = JSON.parse(body)
+      let responseBody = JSON.parse(body)
       let listOflights = {}
       //  save the lights locally as {name: 'name', state: 'on|off'}
-      _.forEach(body, (value, key) => {
+      _.forEach(responseBody, (value, key) => {
+        console.log('value', value);
         listOflights[key] = {
           'name': value.name,
           'state': (value.state.on === true) ? 'on' : 'off'
@@ -288,7 +294,10 @@ const discoverNewLight = (session, callback) => {
 }
 
 const getNewLights = (error, session) => {
-  if (error) return error
+  if (error) {
+    session.send(error)
+    session.endDialog()
+  }
 
   let ipAddress = session.userData.bridgeInfo.internalipaddress
   let username = session.userData.bridgeInfo.username
@@ -307,6 +316,7 @@ const getNewLights = (error, session) => {
       newLights += value.name + '\n'
     })
     session.send(newLights)
+    session.endDialog()
   })
 }
 
@@ -322,130 +332,64 @@ const addNewLights = (session) => {
 
 bot.dialog('add_new_lights', [addNewLights]).triggerAction({matches: 'New Light'})
 
-const getNewLightName = (session, args) => {
-  let lightID = args
-  builder.Prompts.text(session, 'What will the new name be?')
-}
-
-const changeToNewName = (session, results) => {
-
-}
-
-bot.dialog('get_new_light_name', [getNewLightName])
-
 const getLightToChange = (session) => {
   // {
   //  '1': { name: 'Hue Lamp 1', state: 'on' },
   // '2': { name: 'Hue Lamp 2', state: 'off' }
   // }
-  builder.Prompts.text(session, 'What\'s the name of the light you want to change?')
+  getAllLights(session, () => {
+    builder.Prompts.text(session, 'What\'s the name of the light you want to change?')
+  })
 }
 
-const changeLightName = (session, results) => {
+const findLightToChange = (session, results) => {
   let nameOfLight = results.response
   let listOflights = session.userData.listOflights
-  let lightID;
-  _.forEach(listOflights, (value, key) => {
-    lightID = _.find(value, {name: nameOfLight}) === 'undefined' ? null : key
+  let foundLightID;
+
+  _.forEach(listOflights, (lightProps, lightID) => {
+    if (foundLightID) return false
+    foundLightID = _.includes(lightProps, nameOfLight) ? lightID : null
+    console.log('foundLightID', foundLightID)
   })
-  if (lightID) {
-    session.beginDialog('get_new_light_name', lightID)
+  if (foundLightID) {
+    session.dialogData.foundLightID = foundLightID
+    builder.Prompts.text(session, 'What will the new name be?')
   }
   else
   {
     session.send('I don\'t recognize ' + nameOfLight + ' as one of your light.')
+    session.endDialog()
   }
 }
 
-bot.dialog('change_light_name', [getLightToChange, changeLightName]).triggerAction({matches: 'change light name'})
+const getNewLightName = (session, results) => {
+  let newName = results.response
+  let lightID = session.dialogData.foundLightID
+  let ipAddress = session.userData.bridgeInfo.internalipaddress
+  let username = session.userData.bridgeInfo.username
+  let url = 'https://' + ipAddress + '/api/' + username + '/lights/' + lightID
+
+  request.put(url, {"name": newName}, (error, response, body) => {
+    if (_.find(body, 'success')) {
+      session.send('I have successfully change the light\'s name')
+    }
+    else {
+      session.send('I ran into problem while changing the name. Please try again.')
+    }
+    session.endDialog()
+  })
+}
+
+bot.dialog('change_light_name', [getLightToChange, findLightToChange, getNewLightName]).triggerAction({matches: 'change light name'})
 
 const switchLight = (session) => {
 
 }
 
-
 // For TESTING
-const test2 = (error, listOflights) => {
-  let nameOfLight = 'Hue Lamp 1'
-  let found;
-
-}
-
-const test1 = (session, callback) => {
-  session.send(session.userData.name)
-  // session.userData.name = 'Doe'
-  let testBody = {
-    "1": {
-        "state": {
-            "on": true,
-            "bri": 144,
-            "hue": 13088,
-            "sat": 212,
-            "xy": [0.5128,0.4147],
-            "ct": 467,
-            "alert": "none",
-            "effect": "none",
-            "colormode": "xy",
-            "reachable": true
-        },
-        "type": "Extended color light",
-        "name": "Hue Lamp 1",
-        "modelid": "LCT001",
-        "swversion": "66009461",
-        "pointsymbol": {
-            "1": "none",
-            "2": "none",
-            "3": "none",
-            "4": "none",
-            "5": "none",
-            "6": "none",
-            "7": "none",
-            "8": "none"
-        }
-    },
-    "2": {
-        "state": {
-            "on": false,
-            "bri": 0,
-            "hue": 0,
-            "sat": 0,
-            "xy": [0,0],
-            "ct": 0,
-            "alert": "none",
-            "effect": "none",
-            "colormode": "hs",
-            "reachable": true
-        },
-        "type": "Extended color light",
-        "name": "Hue Lamp 2",
-        "modelid": "LCT001",
-        "swversion": "66009461",
-        "pointsymbol": {
-            "1": "none",
-            "2": "none",
-            "3": "none",
-            "4": "none",
-            "5": "none",
-            "6": "none",
-            "7": "none",
-            "8": "none"
-        }
-    }
-  }
-  let listOflights = {}
-  _.forEach(testBody, (value, key) => {
-    listOflights[key] = {
-      'name': value.name,
-      'state': (value.state.on === true) ? 'on' : 'off'
-    }
-  })
-  console.log(listOflights)
-  callback(null, listOflights)
-}
-
 const test = (session) => {
-  session.userData.name = 'Dae'
-  test1(session, test2)
+  console.log('ip address', session.userData.bridgeInfo.internalipaddress);
 }
 
 bot.dialog('test', [test]).triggerAction({matches: 'Test'})
