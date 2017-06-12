@@ -257,12 +257,33 @@ const getAllLights = (session, callback) => {
       _.forEach(responseBody, (value, key) => {
         listOflights[key] = {
           'name': value.name,
-          'state': (value.state.on === true) ? 'on' : 'off'
+          'state': (value.state.on === true) ? 'on' : 'off',
+          'id': key
         }
       })
       session.userData.listOflights = listOflights
       callback()
     })
+  }
+}
+
+const findLight = (session, results, next) => {
+  let nameOfLight = results.response
+  let listOflights = session.userData.listOflights
+  let foundLight;
+
+  _.forEach(listOflights, (lightProps, lightID) => {
+    if (foundLight) return false
+    foundLight = _.includes(lightProps, nameOfLight) ? lightProps : null
+  })
+  if (foundLight) {
+    session.dialogData.foundLight = foundLight
+    next()
+  }
+  else
+  {
+    session.send('I don\'t recognize ' + nameOfLight + ' as one of your light.')
+    session.endDialog()
   }
 }
 
@@ -348,30 +369,13 @@ const getLightToChange = (session) => {
   })
 }
 
-const findLightToChange = (session, results) => {
-  let nameOfLight = results.response
-  let listOflights = session.userData.listOflights
-  let foundLightID;
-
-  _.forEach(listOflights, (lightProps, lightID) => {
-    if (foundLightID) return false
-    foundLightID = _.includes(lightProps, nameOfLight) ? lightID : null
-    console.log('foundLightID', foundLightID)
-  })
-  if (foundLightID) {
-    session.dialogData.foundLightID = foundLightID
-    builder.Prompts.text(session, 'What will the new name be?')
-  }
-  else
-  {
-    session.send('I don\'t recognize ' + nameOfLight + ' as one of your light.')
-    session.endDialog()
-  }
+const getLightNewName = (session) => {
+  builder.Prompts.text(session, 'What\'s the name of the light you want to change?')
 }
 
-const getNewLightName = (session, results) => {
+const setLightNewName = (session, results) => {
   let newName = results.response
-  let lightID = session.dialogData.foundLightID
+  let lightID = session.dialogData.foundLight.id
   let ipAddress = session.userData.bridgeInfo.internalipaddress
   let username = session.userData.bridgeInfo.username
   let url = 'https://' + ipAddress + '/api/' + username + '/lights/' + lightID
@@ -394,37 +398,12 @@ const getNewLightName = (session, results) => {
   })
 }
 
-bot.dialog('change_light_name', [getLightToChange, findLightToChange, getNewLightName]).triggerAction({matches: 'Change Light Name'})
+bot.dialog('change_light_name', [getLightToChange, findLight, getLightNewName, setLightNewName]).triggerAction({matches: 'Change Light Name'})
 
 const getLightToSwitch = (session) => {
   getAllLights(session, () => {
     builder.Prompts.text(session, 'What\'s the name of the light you want to switch?')
   })
-}
-
-const findLightToSwitch = (session, results, next) => {
-  let nameOfLight = results.response
-  let listOflights = session.userData.listOflights
-  let foundLight;
-
-  _.forEach(listOflights, (lightProps, lightID) => {
-    if (foundLight) return false
-    if (_.includes(lightProps, nameOfLight)) {
-      foundLight = {
-        id: lightID,
-        props: lightProps
-      }
-    }
-  })
-  if (foundLight) {
-    session.dialogData.foundLight = foundLight
-    next()
-  }
-  else
-  {
-    session.send('I don\'t recognize ' + nameOfLight + ' as one of your light.')
-    session.endDialog()
-  }
 }
 
 const switchLight = (session) => {
@@ -454,10 +433,9 @@ const switchLight = (session) => {
   })
 }
 
-bot.dialog('switch_light', [getLightToSwitch, findLightToSwitch, switchLight]).triggerAction({matches: 'Switch Light'})
+bot.dialog('switch_light', [getLightToSwitch, findLight, switchLight]).triggerAction({matches: 'Switch Light'})
 
 const getOctobluEmail = (session) => {
-  //  TODO: verify octoblu account
   builder.Prompts.text(session, 'What\'s your octoblu email?')
 }
 
@@ -471,29 +449,241 @@ const activateDevMode = (session, results) => {
     else {
       //  TODO: authenticate email with octoblu, if failed -> create new a/c, else -> continue
       session.userData.devMode = true
-      session.send('Dev Mode is activated.')
-      session.send('I need access to a Hue Light connector. You can create a new one by going to https://connector-factory.octoblu.com/connectors/create/octoblu/meshblu-connector-hue-light')
-      session.beginDialog('get_connector')
+      session.send('Dev Mode is activated. I need access to a Hue Light connector for each light.')
+      session.beginDialog('set_connector')
     }
   })
+}
+
+// session.send(' You can create a new one by going to https://connector-factory.octoblu.com/connectors/create/octoblu/meshblu-connector-hue-light')
+
+const getLightforConn = (session) => {
+  builder.Prompts.text(session, 'What\'s the name of the light you want to set a connector with?')
 }
 
 const getConnUUID = (session) => {
-  builder.Prompts.text(session, 'What\'s the connector\'s id?')
+  builder.Prompts.number(session, 'What\'s the connector\'s UUID?')
 }
 
+//  TODO: validateID, validateToken
 const getConnToken = (session, results) => {
   validateID(results.response, (error, isValid) => {
     if (error) {
+      session.send('I ran into problem validating the UUID')
+      session.endDialog()
+    }
+    if (!isValid) {
       session.send('The UUID is invalid.')
+      session.endDialog()
     }
     else {
-
+      session.dialogData.foundLight.lightProps.uuid = results.response
+      builder.Prompts.number(session, 'What\'s the connector\'s token?')
     }
   })
 }
 
-bot.dialog('get_connector', [getConnUUID, getConnToken]).triggerAction({matches: 'connect connector'})
+const saveConnToken = (session, results) => {
+  validateToken(results.response, (error, isValid) => {
+    if (error) {
+      session.send('I ran into problem validating the UUID')
+    }
+    if (!isValid) {
+      session.send('The UUID is invalid.')
+    }
+    else {
+      session.dialogData.foundLight.lightProps.token = results.response
+      //  TODO: update session.userData.listOflights
+    }
+    session.endDialog()
+  })
+}
+
+bot.dialog('get_connector', [getLightforConn, findLight, getConnUUID, getConnToken, saveConnToken]).triggerAction({matches: 'connect connector'})
+
+const getUserUUID = (session) => {
+  builder.Prompts.text(session, 'What\'s your account\'s UUID')
+}
+
+const createConn = (session, results) => {
+  //  TODO: Hoping that authentication w/ octoblu will return user's UUID
+  //  then userUUID = session.userData.UUID
+  let userUUID = results.response
+  let schemas = {
+    configure: {
+      Advanced: {
+        properties: {
+          desiredState: {
+            properties: {
+              alert: { title: 'Alert Effect', type: 'string' },
+              color: { title: 'Color', type: 'string' },
+              effect: { title: 'Dynamic Effect', type: 'string' },
+              on: { title: 'Light On', type: 'boolean' },
+              transitiontime: {
+                minimum: 0,
+                title: 'Transition Time (in milliseconds)',
+                type: 'integer'
+              }
+            },
+            title: 'Desired State',
+            type: 'object'
+          },
+          options: {
+            properties: {
+              apiUsername: {
+                default: 'newdeveloper',
+                title: 'API Username',
+                type: 'string'
+              },
+              ipAddress: { title: 'Bridge IP Address', type: 'string' },
+              lightNumber: {
+                default: 0,
+                minimum: 0,
+                title: 'Light Number',
+                type: 'integer'
+              }
+            },
+            title: 'Options',
+            type: 'object'
+          },
+          required: [ 'lightNumber', 'apiUsername']
+        },
+        title: 'Advanced Configuration',
+        type: 'object',
+        'x-form-schema': { angular: 'configure.Advanced.angular' }
+      },
+      Default: {
+        properties: {
+          desiredState: {
+            properties: {
+              alert: { title: 'Alert Effect', type: 'string' },
+              color: { title: 'Color', type: 'string' },
+              effect: { title: 'Dynamic Effect', type: 'string' },
+              on: { title: 'Light On', type: 'boolean' },
+              transitiontime: {
+                minimum: 0,
+                title: 'Transition Time (in milliseconds)',
+                type: 'integer'
+              }
+            },
+            title: 'Desired State',
+            type: 'object'
+          },
+          options: {
+            properties: {
+              lightNumber: {
+                default: 0,
+                minimum: 0,
+                title: 'Light Number',
+                type: 'integer'
+              }
+            },
+            title: 'Options',
+            type: 'object' },
+            required: [ 'lightNumber' ]
+          },
+        title: 'Default Configuration',
+        type: 'object',
+        'x-form-schema': { angular: 'configure.Default.angular' }
+      }
+    },
+    form: {
+      configure: {
+        Advanced: {
+          angular:[
+            { key: 'options.ipAddress' },
+            { key: 'options.apiUsername' },
+            { key: 'options.lightNumber' },
+            { key: 'desiredState.color' },
+            { key: 'desiredState.on' },
+            { key: 'desiredState.transitiontime' },
+            { key: 'desiredState.alert', titleMap: [
+                { name: 'None', value: 'none' },
+                { name: 'Flash Once (select)', value: 'select' },
+                { name: 'Flash Repeatedly (lselect)', value: 'lselect' }
+              ],
+              type: 'select' },
+            { key: 'desiredState.effect', titleMap: [
+                { name: 'None', value: 'none' },
+                { name: 'Color Loop', value: 'colorloop' }
+              ],
+              type: 'select' }
+          ]
+        },
+        Default: {
+          angular:[
+            { key: 'options.lightNumber' },
+            { key: 'desiredState.color' },
+            { key: 'desiredState.on' },
+            { key: 'desiredState.transitiontime' },
+            { key: 'desiredState.alert', titleMap: [
+                { name: 'None', value: 'none' },
+                { name: 'Flash Once (select)', value: 'select' },
+                { name: 'Flash Repeatedly (lselect)', value: 'lselect' }
+              ],
+              type: 'select' },
+            { key: 'desiredState.effect', titleMap: [
+                { name: 'None', value: 'none' },
+                { name: 'Color Loop', value: 'colorloop' }
+              ],
+              type: 'select' }
+          ]
+        }
+      },
+      message: {}
+    },
+    message: {},
+    response: {},
+    version: '2.0.0',
+    selected: { configure: 'Advanced' }
+  }
+  let listOflights = session.userData.listOflights
+
+  async.each(listOflights, (eachLight, callback) => {
+    let ip_address = session.userData.bridgeInfo.internalipaddress
+    let username = session.userData.bridgeInfo.username
+    let opt = {
+      method: 'POST',
+      url: 'https://meshblu.octoblu.com/devices',
+      json: {
+        type: 'device:hue-light',
+        owner: userUUID,
+        connector: 'meshblu-connector-hue-light',
+        name: eachLight.name,
+        on: eachLight.state,
+        options: {
+          ipAddress: ip_address,
+          Username: username,
+          lightNumber: eachLight.id
+        },
+        schemas: schemas
+      }
+    }
+
+    request(opt, (err, res, body) => {
+      if (err) return callback(err)
+      console.log('body', body);
+      eachLight.uuid = body.uuid
+      eachLight.token = body.token
+      return callback()
+    })
+  }, (err) => {
+    if (err) return session.send('I ran into problem creating a connector.')
+    return session.send('I have successfully created a connector for each light. You can find and download the connector(s) here https://app.octoblu.com/things/my')
+  })
+}
+
+bot.dialog('create_connector', [getUserUUID, createConn])
+
+const hasConn1 = (session) => {
+  builder.Prompts.choice(session, 'Do you have an existing Hue connector(s)?', 'Yes|No')
+}
+
+const hasConn2 = (session, results) => {
+  results.entity.index == 0 ? session.beginDialog('get_connector') : session.beginDialog('create_connector')
+}
+
+bot.dailog('set_connector', [hasConn1, hasConn2])
 
 bot.dialog('activate_dev_mode', [getOctobluEmail, activateDevMode]).triggerAction({matches: 'Dev Mode'})
 
