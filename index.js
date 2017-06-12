@@ -167,7 +167,7 @@ const getBridgeInfoCallback = (session, devSetup, bridgeInfo) => {
 const bridgeError = (session, bridgeInfo) => {
   switch (bridgeInfo.error) {
     case 1:
-      session.send('No Hue bridges found on this WiFi. \n Say \'Setup\' when new bridge is connected.')
+      session.send('')
       break
     case 2:
       session.send('None of the bridges found was pushed.')
@@ -180,11 +180,11 @@ const bridgeError = (session, bridgeInfo) => {
 
 const findHueBridgesOnNetwork = (callback) => {
   request.get('https://www.meethue.com/api/nupnp', (error, response, body) => {
-    if (error) return callback(new Error(error.message))
+    if (error) return callback(error.message)
 
     const responseBody = JSON.parse(body)
 
-    if (_.isEmpty(responseBody)) return callback(new Error('No bridges found.'))
+    if (_.isEmpty(responseBody)) return callback('No bridges found.')
 
     const bridgeIpAddresses = _.filter(responseBody, 'internalipaddress')
 
@@ -192,8 +192,12 @@ const findHueBridgesOnNetwork = (callback) => {
   })
 }
 
-const callback = (error, bridges) => {
-  if (error) return console.log('error', error)
+const getBridgeCallback = (error, bridges) => {
+  if (error) {
+    //  'No bridges found'
+    console.log(error)
+    return {error: 'No Hue bridges found on this WiFi. \n Say \'Setup\' when new bridge is connected.'}
+  }
 
   async.retry({times: 3, interval: 5000}, (callback, bridges) => {
     async.each(bridges, (bridgeIp, callback) => {
@@ -211,24 +215,40 @@ const callback = (error, bridges) => {
           callback('No bridge pushed.')
         }
       })
-    },(error) => {
+    }, (error) => {
       if(error) {
         return callback(error)
       }
       return callback(null, 'Username obtained')
     })
   }, (error, results) => {
-    if (error) return console.log(error)
+    if (error) {
+      console.log(error)
+      return {error: error}
+    }
     console.log(results)
-    return console.log('Bridges', _.find(bridges, 'username'))
+    //  TODO: use '_.filter' to get array of bridges
+    console.log('Bridges', _.find(bridges, 'username'))
+    return _.find(bridges, 'username')
   })
 }
 
 const nonDevSetup = (session) => {
-  let bridgeInfo = findHueBridgesOnNetwork(callback)
-  //  TODO: set userData's bridgeInfo
-  session.send('Found a bridge.')
-  session.beginDialog('/nonDevCommands')
+  async.waterfall([
+    (callback) => {
+      callback(null, findHueBridgesOnNetwork(callback))
+    }],
+    (error, result) => {
+      if (result.error) {
+        session.send(result.error)
+      }
+      else
+      {
+        session.userData.bridgeInfo = result
+        session.send('Found a bridge.')
+      }
+      session.beginDialog('/nonDevCommands')
+    })
 }
 
 bot.dialog('/nonDevSetup', [nonDevSetup])
@@ -261,10 +281,12 @@ const linkToConnector = (session) => {
   session.send('Go to https://connector-factory.octoblu.com/connectors/create/octoblu/meshblu-connector-hue-light , sign in with your email and password.')
   session.sendTyping()
   builder.Prompts.choice(session, 'Do you see a page showing a list of versions of Philips Hue Light connectors?', ['Yeah, I do.', 'Nope! The link didn\'t work.', 'I\'ve gone past that page.'])
+  // builder.Prompts.text(session, 'Do you see a page showing a list of versions of Philips Hue Light connectors?')
 }
 
 const installConnector = (session, results) => {
-  switch (results.response.entity) {
+  //  TODO: combine this function with 'linkToConnector'
+  switch (results.response) {
     case 'Yeah, I do.':
       session.send('Select a version. Tip: Choose the latest version.')
       break
@@ -276,9 +298,6 @@ const installConnector = (session, results) => {
     default:
       //TODO:
   }
-  // THIS BELOW IS A NIGHTMARE
-  // session.send('Next step: install the connector')
-  // next()
   builder.Prompts.choice(session, 'Did you install the connector yet?', ['No, I was waiting for you to ask.', 'You bet I did!', 'Still installing'])
 }
 
@@ -334,8 +353,26 @@ bot.dialog('/getUserConnInfo', [getUserUUID, getConnUUID, getConnToken, gotUserC
 const collectBridgeInfo = (session, results) => {
   session.send('Let\'s configure the connector in Octoblu.')
   session.send('First, I need you to push the button on your Hue Bridge within the next 5 seconds.')
-  let bridgeInfo = findHueBridgesOnNetwork(callback)
-  //  TODO: set userData's bridgeInfo
+  async.waterfall([
+    (callback) => {
+      let result = findHueBridgesOnNetwork(getBridgeCallback)
+      callback(null, result)
+    },
+    (result, callback) => {
+      callback(null, result)
+    }],
+    (error, result) => {
+
+      // if (result.error) {
+      //   session.send(result.error)
+      // }
+      // else
+      // {
+      //   session.userData.bridgeInfo = result
+      //   session.send('Found a bridge.')
+      // }
+      // session.beginDialog('/nonDevCommands')
+    })
 }
 
 const confirmConnector = (session) => {
@@ -411,6 +448,28 @@ const commands = (session) => {
     //
   session.send('')
 }
+
+bot.dialog('/nonDevCommands', [commands])
+
+const getLightsViaAPI = (session) => {
+  let url = 'http://api/' + session.userData.bridgeInfo.username + '/lights'
+
+  request.get(url, (error, response, body) => {
+    let listOflights = body
+  })
+}
+
+const getNewLightsViaAPI = (session) => {
+  let url = 'http://api/' + session.userData.bridgeInfo.username + '/lights/new'
+
+  request.get(url, (error, response, body) => {
+    // Returns “active” if a scan is currently on-going, “none” if a scan has not been performed since the bridge was powered on, or else the date and time that the last scan was completed in ISO 8601:2004 format (YYYY-MM-DDThh:mm:ss)
+  })
+}
+
+bot.dialog('showListOfLights', [getLightsViaAPI]).triggerAction({matches: 'show lights'})
+
+bot.dialog('getNewLights', [getLightsViaAPI]).triggerAction({matches: 'add new light'})
 
 bot.dialog('installationWalkThru', [])
 
