@@ -53,6 +53,8 @@ bot.recognizer({
         case 'switch light':
         intent = {score: 1.0, intent: 'Switch Light'}
           break;
+        case 'activate flow':
+        intent = {score: 1.0, intent: 'Flow'}
         default:
       }
       done(null, intent)
@@ -80,8 +82,7 @@ const currentUser = (session) => {
 }
 
 const isSetupSuccessfull = (session, results, next) => {
-  if (!results.bridge) session.endDialog()
-  else { next() }
+  session.userData.bridgeInfo ? next() : session.endDialog()
 }
 
 const displayCommands = (session) => {
@@ -106,7 +107,7 @@ const requestBridges = (session) => {
   session.beginDialog('get_bridges')
 }
 
-const setUserBridge = (session, results, next) => {
+const setUserBridge = (session, results) => {
   if (results.bridge) {
     session.userData.bridgeInfo = results.bridge
     session.send('I found your bridge.')
@@ -127,23 +128,19 @@ const getBridges = (session, results) => {
   session.send('I\'m searching for Hue bridges on this WiFi.')
   request.get('https://www.meethue.com/api/nupnp', (error, response, body) => {
     if (error) {
-      results = {error: error.message}
+      results = { error: error.message }
       session.endDialogWithResult(results)
     }
 
     const responseBody = JSON.parse(body)
 
     if (_.isEmpty(responseBody)) {
-      results = {error: 'I couldn\'t find any Hue bridge on this WiFi. \n Say \'Setup\' when new bridge is available.'}
+      results = { error: 'I couldn\'t find any Hue bridge on this WiFi. \n Say \'Setup\' when new bridge is available.' }
       session.endDialogWithResult(results)
     }
     else
     {
-      const bridgeIpAddresses = _.filter(responseBody, 'internalipaddress')
-
-      results = {
-        bridges: bridgeIpAddresses
-      }
+      results = { bridges: _.filter(responseBody, 'internalipaddress') }
       //  pass the bridges found to next stack and return one bridge
       session.beginDialog('get_user_bridge', results)
     }
@@ -159,18 +156,13 @@ bot.dialog('get_bridges', [getBridges, returnUserBridge])
 
 const wannaSetup = (session) => {
   session.send('I see you haven\'t setup a Hue bridge yet.')
-  builder.Prompts.choice(session, 'Ready to setup one now?', ['Yeah', 'No'])
+  builder.Prompts.confirm(session, 'Ready to setup one now?')
 }
 
 const toSetup = (session, results) => {
-  if (results.response.entity === 'Yeah') {
-    session.beginDialog('setup')
-  }
-  else
-  {
-    session.send('No problem. Just say \'Setup\' when you\'re ready connect a new Hue bridge')
-    session.endDialog()
-  }
+  if (results.response) return session.beginDialog('setup')
+  session.send('No problem. Just say \'Setup\' when you\'re ready connect a new Hue bridge')
+  session.endDialog()
 }
 
 bot.dialog('no_bridge', [wannaSetup, toSetup, returnUserBridge])
@@ -181,17 +173,16 @@ const receiveBridges = (session, args, next) => {
   next()
 }
 
-const somethingDiff = (listOfBridges, callback) => {
+const findBridgePushed = (listOfBridges, callback) => {
+  //  call callback after _.forEach runs on each bridge
   let after = _.after(_.size(listOfBridges), () => {
-    callback('No bridge pushed')
+    callback('None of the bridges I found was pushed.')
   })
   _.forEach(listOfBridges, (eachBridge) => {
     if (_.find(eachBridge, 'username')) return false
     let url = 'http://' + eachBridge.internalipaddress + '/api/'
     request.post(url, {json: {'devicetype': 'blu-hue-bot#bridge'}}, (error, response, body) => {
-      if (error) {
-        callback(error)
-      }
+      if (error) callback(error)
       if (body[0]['success']) {
         eachBridge.username = body[0]['success']['username']
         callback(null, eachBridge)
@@ -202,18 +193,15 @@ const somethingDiff = (listOfBridges, callback) => {
 }
 
 const findUserBridge = (session, results) => {
-  let listOfBridges = session.dialogData.bridges
-  const thingToRetry = async.apply(somethingDiff, listOfBridges)
-  async.retry({times: 4, interval: 5000}, thingToRetry, (error, bridgePushed) => {
+  const functionToRetry = async.apply(findBridgePushed, session.dialogData.bridges)
+  async.retry({times: 4, interval: 5000}, functionToRetry, (error, bridgePushed) => {
     if (error) {
-        results = {error: error}
+        results = {error: error }
         session.endDialogWithResult(results)
       }
     //  TODO: use '_.filter' to get array of bridges if multiple bridges are pushed
     else {
-      results = {
-        bridge: bridgePushed
-      }
+      results = { bridge: bridgePushed }
       session.endDialogWithResult(results)
     }
   })
@@ -234,6 +222,8 @@ bot.dialog('get_user_bridge', [receiveBridges, findUserBridge])
 //Create group
 //Setup schedules
 
+/* NON-DEV */
+
 const getAllLights = (session, callback) => {
   //   Make sure there's at least one bridge to work with
   if (!session.userData.bridgeInfo) {
@@ -253,7 +243,7 @@ const getAllLights = (session, callback) => {
       //  body contains the list of lights connected to the bridge
       let responseBody = JSON.parse(body)
       let listOflights = {}
-      //  save the lights locally as {name: 'name', state: 'on|off'}
+      //  save the lights locally as {name: 'name', state: 'on|off' ...}
       _.forEach(responseBody, (value, key) => {
         listOflights[key] = {
           'name': value.name,
@@ -322,7 +312,7 @@ const discoverNewLight = (session, callback) => {
 
 const getNewLights = (error, session) => {
   if (error) {
-    session.send(error)
+    session.send('I ran into problem getting new lights.')
     session.endDialog()
   }
 
@@ -337,11 +327,11 @@ const getNewLights = (error, session) => {
     // let responseBody = JSON.parse(body)
     let newLights = 'I found ' + _.size(body) - 1 + ' new lights.\n'
     _.forEach(body, (value, key) => {
-      session.userData.listOflights[key] = {
-        name: value.name
-      }
+      session.userData.listOflights[key] = { name: value.name }
       newLights += value.name + '\n'
     })
+    //  create new connectors for new lights
+    if (session.userData.devMode) createConn()
     session.send(newLights)
     session.endDialog()
   })
@@ -370,23 +360,22 @@ const getLightToChange = (session) => {
 }
 
 const getLightNewName = (session) => {
-  builder.Prompts.text(session, 'What\'s the name of the light you want to change?')
+  builder.Prompts.text(session, 'What name do you want to change to?')
 }
 
 const setLightNewName = (session, results) => {
-  let newName = results.response
+  if (session.userData.devMode) return session.beginDialog('dev_change_light_name', session.dialogData.foundLight, results.response)
   let lightID = session.dialogData.foundLight.id
   let ipAddress = session.userData.bridgeInfo.internalipaddress
   let username = session.userData.bridgeInfo.username
-  let url = 'https://' + ipAddress + '/api/' + username + '/lights/' + lightID
+  let url = 'http://' + ipAddress + '/api/' + username + '/lights/' + lightID
   let options = {
-    url: url,
     method: 'PUT',
+    url: url,
     json: {
-      "name": newName
+      "name": results.response
     }
   }
-
   request(options, (error, response, body) => {
     if (_.find(body, 'success')) {
       session.send('I have successfully change the light\'s name')
@@ -407,16 +396,17 @@ const getLightToSwitch = (session) => {
 }
 
 const switchLight = (session) => {
+  if (session.userData.devMode) session.beginDialog('dev_switch_light', session.dialogData.foundLight)
   let light = session.dialogData.foundLight
   let ipAddress = session.userData.bridgeInfo.internalipaddress
   let username = session.userData.bridgeInfo.username
-  let url = 'https://' + ipAddress + '/api/' + username + '/lights/' + light.id + '/state'
+  let url = 'http://' + ipAddress + '/api/' + username + '/lights/' + light.id + '/state'
   console.log('url', url)
   let options = {
     method: 'PUT',
     url: url,
     json: {
-      "on": light.props.state === 'on' ? false : true
+      "on": light.state === 'on' ? false : true
     }
   }
 
@@ -424,7 +414,7 @@ const switchLight = (session) => {
     console.log('error', error);
     console.log('body', body);
     if (_.find(body, 'success')) {
-      session.send('I have successfully switched the light')
+      session.send('I have successfully switched the light ' + light.state === 'on' ? 'off' : 'on')
     }
     else {
       session.send('I ran into problem while switching the light. Please try again.')
@@ -435,6 +425,33 @@ const switchLight = (session) => {
 
 bot.dialog('switch_light', [getLightToSwitch, findLight, switchLight]).triggerAction({matches: 'Switch Light'})
 
+/* DEV */
+
+const devSwitchLight = (session, foundLight) => {
+  if (!foundLight.uuid) {
+    session.send('This light is not connected to a connector yet. Let\'s connect it.')
+    session.beginDialog('set_connector')
+  }
+  request.put('https://' + session.userData.UUID + ':' + session.userData.TOKEN + '@meshblu.octoblu.com/devices/' + foundLight.uuid, {json: {desiredState: {on: true}}}, (error, response, body) => {
+    if (error) return session.send('I ran into problem switching the light through Octoblu.')
+    session.send('I have successfully switched the light ' + foundLight.state === 'on' ? 'off' : 'on')
+  })
+}
+
+bot.dialog('dev_switch_light', [devSwitchLight])
+
+const devChangeLightName = (session, foundLight, newName) => {
+  if (!foundLight.uuid) {
+    session.send('This light is not connected to a connector yet. Let\'s connect it.')
+    session.beginDialog('set_connector')
+  }
+  request.put('https://' + session.userData.UUID + ':' + session.userData.TOKEN + '@meshblu.octoblu.com/devices/' + foundLight.uuid, {json: {name: newName}}, (error, response, body) => {
+    if (error) return session.send('I ran into problem changing the light\'s name through Octoblu.')
+    session.send('I have successfully changed the light\'s name to ' + newName)
+  })
+}
+
+bot.dialog('dev_change_light_name', [devChangeLightName])
 const getOctobluEmail = (session) => {
   builder.Prompts.text(session, 'What\'s your octoblu email?')
 }
@@ -444,7 +461,7 @@ const activateDevMode = (session, results) => {
 
   email_validator.validate_async(givenEmail, (error, isValid) => {
     if (error) {
-      session.send('This email is invalid.')
+      session.send(givenEmail + ' is invalid.')
     }
     else {
       //  TODO: authenticate email with octoblu, if failed -> create new a/c, else -> continue
@@ -455,237 +472,165 @@ const activateDevMode = (session, results) => {
   })
 }
 
+const devModeCommands = (session) => {
+  session.send('You can say \'start flow\', \'add new flow\'')
+}
+
+bot.dialog('activate_dev_mode', [getOctobluEmail, activateDevMode, devModeCommands]).triggerAction({matches: 'Dev Mode'})
 // session.send(' You can create a new one by going to https://connector-factory.octoblu.com/connectors/create/octoblu/meshblu-connector-hue-light')
+
+/* CONNECTOR */
 
 const getLightforConn = (session) => {
   builder.Prompts.text(session, 'What\'s the name of the light you want to set a connector with?')
 }
 
-const getConnUUID = (session) => {
-  builder.Prompts.number(session, 'What\'s the connector\'s UUID?')
+const getConnName = (session) => {
+  builder.Prompts.text(session, 'What\'s the name of the connector? Note: case sensitive')
 }
 
-//  TODO: validateID, validateToken
-const getConnToken = (session, results) => {
-  validateID(results.response, (error, isValid) => {
+const getConn = (session, results) => {
+  let nameOfConn = results.response
+  request.post('https://' + session.userData.UUID + ':' + session.userData.TOKEN + '@meshblu-http.octoblu.com/search/devices', {json: {type: 'device:hue-light'}}, (error, response, body) => {
     if (error) {
-      session.send('I ran into problem validating the UUID')
-      session.endDialog()
+      session.send('I ran into problem finding the connector.')
     }
-    if (!isValid) {
-      session.send('The UUID is invalid.')
-      session.endDialog()
-    }
-    else {
-      session.dialogData.foundLight.lightProps.uuid = results.response
-      builder.Prompts.number(session, 'What\'s the connector\'s token?')
-    }
+    let conn = _.find(body, {name: nameOfConn})
+    if (!conn) return session.send('I don\'t recognize' + nameOfConn + 'as one of your connectors')
+    session.userData.listOflights[session.dialogData.foundLight.id].uuid = conn.uuid
+    session.userData.listOflights[session.dialogData.foundLight.id].token = conn.token
   })
 }
 
-const saveConnToken = (session, results) => {
-  validateToken(results.response, (error, isValid) => {
-    if (error) {
-      session.send('I ran into problem validating the UUID')
-    }
-    if (!isValid) {
-      session.send('The UUID is invalid.')
-    }
-    else {
-      session.dialogData.foundLight.lightProps.token = results.response
-      //  TODO: update session.userData.listOflights
-    }
-    session.endDialog()
+bot.dialog('get_connector', [getLightforConn, findLight, getConnName, getConn]).triggerAction({matches: 'connect connector'})
+
+const creator = (session, listOflights, callback) => {
+  let after = _.after(_.size(listOflights), () => {
+    callback(null)
   })
-}
-
-bot.dialog('get_connector', [getLightforConn, findLight, getConnUUID, getConnToken, saveConnToken]).triggerAction({matches: 'connect connector'})
-
-const getUserUUID = (session) => {
-  builder.Prompts.text(session, 'What\'s your account\'s UUID')
-}
-
-const createConn = (session, results) => {
-  //  TODO: Hoping that authentication w/ octoblu will return user's UUID
-  //  then userUUID = session.userData.UUID
-  let userUUID = results.response
-  let schemas = {
-    configure: {
-      Advanced: {
-        properties: {
-          desiredState: {
-            properties: {
-              alert: { title: 'Alert Effect', type: 'string' },
-              color: { title: 'Color', type: 'string' },
-              effect: { title: 'Dynamic Effect', type: 'string' },
-              on: { title: 'Light On', type: 'boolean' },
-              transitiontime: {
-                minimum: 0,
-                title: 'Transition Time (in milliseconds)',
-                type: 'integer'
-              }
-            },
-            title: 'Desired State',
-            type: 'object'
-          },
-          options: {
-            properties: {
-              apiUsername: {
-                default: 'newdeveloper',
-                title: 'API Username',
-                type: 'string'
-              },
-              ipAddress: { title: 'Bridge IP Address', type: 'string' },
-              lightNumber: {
-                default: 0,
-                minimum: 0,
-                title: 'Light Number',
-                type: 'integer'
-              }
-            },
-            title: 'Options',
-            type: 'object'
-          },
-          required: [ 'lightNumber', 'apiUsername']
-        },
-        title: 'Advanced Configuration',
-        type: 'object',
-        'x-form-schema': { angular: 'configure.Advanced.angular' }
-      },
-      Default: {
-        properties: {
-          desiredState: {
-            properties: {
-              alert: { title: 'Alert Effect', type: 'string' },
-              color: { title: 'Color', type: 'string' },
-              effect: { title: 'Dynamic Effect', type: 'string' },
-              on: { title: 'Light On', type: 'boolean' },
-              transitiontime: {
-                minimum: 0,
-                title: 'Transition Time (in milliseconds)',
-                type: 'integer'
-              }
-            },
-            title: 'Desired State',
-            type: 'object'
-          },
-          options: {
-            properties: {
-              lightNumber: {
-                default: 0,
-                minimum: 0,
-                title: 'Light Number',
-                type: 'integer'
-              }
-            },
-            title: 'Options',
-            type: 'object' },
-            required: [ 'lightNumber' ]
-          },
-        title: 'Default Configuration',
-        type: 'object',
-        'x-form-schema': { angular: 'configure.Default.angular' }
-      }
-    },
-    form: {
-      configure: {
-        Advanced: {
-          angular:[
-            { key: 'options.ipAddress' },
-            { key: 'options.apiUsername' },
-            { key: 'options.lightNumber' },
-            { key: 'desiredState.color' },
-            { key: 'desiredState.on' },
-            { key: 'desiredState.transitiontime' },
-            { key: 'desiredState.alert', titleMap: [
-                { name: 'None', value: 'none' },
-                { name: 'Flash Once (select)', value: 'select' },
-                { name: 'Flash Repeatedly (lselect)', value: 'lselect' }
-              ],
-              type: 'select' },
-            { key: 'desiredState.effect', titleMap: [
-                { name: 'None', value: 'none' },
-                { name: 'Color Loop', value: 'colorloop' }
-              ],
-              type: 'select' }
-          ]
-        },
-        Default: {
-          angular:[
-            { key: 'options.lightNumber' },
-            { key: 'desiredState.color' },
-            { key: 'desiredState.on' },
-            { key: 'desiredState.transitiontime' },
-            { key: 'desiredState.alert', titleMap: [
-                { name: 'None', value: 'none' },
-                { name: 'Flash Once (select)', value: 'select' },
-                { name: 'Flash Repeatedly (lselect)', value: 'lselect' }
-              ],
-              type: 'select' },
-            { key: 'desiredState.effect', titleMap: [
-                { name: 'None', value: 'none' },
-                { name: 'Color Loop', value: 'colorloop' }
-              ],
-              type: 'select' }
-          ]
-        }
-      },
-      message: {}
-    },
-    message: {},
-    response: {},
-    version: '2.0.0',
-    selected: { configure: 'Advanced' }
-  }
-  let listOflights = session.userData.listOflights
-
   async.each(listOflights, (eachLight, callback) => {
-    let ip_address = session.userData.bridgeInfo.internalipaddress
-    let username = session.userData.bridgeInfo.username
+    if (!eachLight.uuid) {
+      let opt = {
+        method: 'POST',
+        url: 'https://' + session.userData.UUID + ':' + session.userData.TOKEN + '@connector-service.octoblu.com/users/' + session.userData.UUID + '/connectors',
+        json: {
+          "name": eachLight.name,
+          "githubSlug": "octoblu/meshblu-connector-hue-light",
+          "type": "device:hue-light",
+          "connector": "meshblu-connector-hue-light",
+          "registryItem": {
+            "_id": "octoblu-meshblu-connector-hue-light",
+            "name": "Phillips Hue Light",
+            "description": "Philips hue combines brilliant LED light with intuitive technology, then puts it in the palm of your hand. Experiment with shades of white, from invigorating blue/white to cozy yellow/white.",
+            "type": "device:hue-light",
+            "tags": [ "Home Automation" ]
+          }
+        }
+      }
+      request(opt, (err, res, body) => {
+        if (err) return callback(err)
+        eachLight.uuid = body.uuid
+        eachLight.token = body.token
+        after()
+      })
+    }
+  }, (err) => {
+    if (err) return callback(err)
+    callback(null, session, listOflights)
+  })
+}
+
+const setter = (session, listOflights, callback) => {
+  let after = _.after(_.size(listOflights), () => {
+    callback(null)
+  })
+  async.each(listOflights, (eachLight, callback) => {
     let opt = {
-      method: 'POST',
-      url: 'https://meshblu.octoblu.com/devices',
+      method: 'PUT',
+      url: 'https://' + session.userData.UUID + ':' + session.userData.TOKEN + '@meshblu.octoblu.com/devices/' + eachLight.uuid,
       json: {
-        type: 'device:hue-light',
-        owner: userUUID,
-        connector: 'meshblu-connector-hue-light',
-        name: eachLight.name,
-        on: eachLight.state,
-        options: {
-          ipAddress: ip_address,
-          Username: username,
-          lightNumber: eachLight.id
-        },
-        schemas: schemas
+        "on": eachLight.state,
+        "options": {
+          "ipAddress": session.userData.bridgeInfo.internalipaddress,
+          "apiUsername": session.userData.bridgeInfo.username,
+          "lightNumber": eachLight.id
+        }
       }
     }
-
     request(opt, (err, res, body) => {
       if (err) return callback(err)
       console.log('body', body);
-      eachLight.uuid = body.uuid
-      eachLight.token = body.token
-      return callback()
+      after()
     })
   }, (err) => {
-    if (err) return session.send('I ran into problem creating a connector.')
-    return session.send('I have successfully created a connector for each light. You can find and download the connector(s) here https://app.octoblu.com/things/my')
+    if (err) return callback(err)
+    callback(null)
   })
 }
 
-bot.dialog('create_connector', [getUserUUID, createConn])
+const createConn = (session) => {
+  getAllLights(session, () => {
+    //  TODO: Hoping that authentication w/ octoblu will return user's UUID
+    //  then userUUID = session.userData.UUID
+    let listOflights = session.userData.listOflights
+
+    async.waterfall([
+        creator(session, listOflights),
+        setter,
+    ], function (err, result) {
+        if (err) return session.send('I ran into problem creating a connector.')
+        return session.send('I have successfully created a connector for each light. You can find and download the connector(s) here https://app.octoblu.com/things/my')
+    });
+  })
+}
+
+bot.dialog('create_connector', [createConn])
 
 const hasConn1 = (session) => {
-  builder.Prompts.choice(session, 'Do you have an existing Hue connector(s)?', 'Yes|No')
+  if (session.userData.devMode) {
+    builder.Prompts.confirm(session, 'Do you have an existing Hue connector(s)?')
+  }
+  else {
+    session.send('Developer mode must be activated to use this function. You can say \'Dev Mode\'')
+    session.endDialog()
+  }
 }
 
 const hasConn2 = (session, results) => {
-  results.entity.index == 0 ? session.beginDialog('get_connector') : session.beginDialog('create_connector')
+  results.response ? session.beginDialog('get_connector') : session.beginDialog('create_connector')
 }
 
-bot.dailog('set_connector', [hasConn1, hasConn2])
+bot.dialog('set_connector', [hasConn1, hasConn2])
 
-bot.dialog('activate_dev_mode', [getOctobluEmail, activateDevMode]).triggerAction({matches: 'Dev Mode'})
+/* FLOW */
+
+const getFlowName = (session) => {
+  builder.Prompts.text(session, 'What\'s the name of the flow you want to activate?')
+}
+
+const findFlow = (session, results) => {
+  let nameOfFlow = results.response
+  //  TODO: listOfflows.include(nameOfFlow) ? get id : request octoblu
+  request.get('https://' + session.userData.UUID + ':' + session.userData.TOKEN + '@api.octoblu.com/api/flows', (err, res, body) => {
+    console.log(JSON.parse(body)[0]['_id'])
+    let responseBody = JSON.parse(body)
+    let flow = _.find(responseBody, {name: nameOfFlow})
+    session.userData.listOfflows[flow['_id']] = {
+      name: flow.name,
+      id: flow['_id'],
+      flowId: flow.flowId
+    }
+  })
+}
+
+const activateFlow = (session) => {
+  request.post('https://nanocyte-flow-deploy.octoblu.com/flows/' + session.dialogData.flowID + '/instances', (error, response, body) => {
+    if (error) return session.send('I ran into error activating that flow.')
+    session.send('I successfully activated the flow')
+  })
+}
+
+bot.dialog('flow_activation', [getFlowName, activateFlow]).triggerAction({matches: 'Flow'})
 
 // For TESTING
 const test = (session) => {
