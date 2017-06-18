@@ -51,10 +51,13 @@ bot.recognizer({
           intent = {score: 1.0, intent: 'Dev Mode'}
           break;
         case 'switch light':
-        intent = {score: 1.0, intent: 'Switch Light'}
+          intent = {score: 1.0, intent: 'Switch Light'}
           break;
         case 'activate flow':
-        intent = {score: 1.0, intent: 'Flow'}
+          intent = {score: 1.0, intent: 'Flow'}
+        case 'connect connector':
+          intent = {score: 1.0, intent: 'connect connector'}
+          break;
         default:
       }
       done(null, intent)
@@ -66,6 +69,8 @@ bot.recognizer({
 currentUser is a function that is triggered when the bot is initiated. It checks if a user already exists or not and directs the bot accordingly.
 */
 const currentUser = (session) => {
+  session.userData.UUID = '7f40525e-981f-4170-9656-95d9076d6466'
+  session.userData.TOKEN = 'c64ef6296776974f56bad7f8c0e6fc7037e71703'
   if (!session.userData.name) {
     // start a new chat if current user doesn't exists
     session.beginDialog('startup')
@@ -414,7 +419,7 @@ const switchLight = (session) => {
     console.log('error', error);
     console.log('body', body);
     if (_.find(body, 'success')) {
-      session.send('I have successfully switched the light ' + light.state === 'on' ? 'off' : 'on')
+      session.send('I have successfully switched ' + light.name + ' ' + (light.state === 'on' ? 'off' : 'on'))
     }
     else {
       session.send('I ran into problem while switching the light. Please try again.')
@@ -460,7 +465,7 @@ const activateDevMode = (session, results) => {
   let givenEmail = results.response
 
   email_validator.validate_async(givenEmail, (error, isValid) => {
-    if (error) {
+    if (error || !isValid) {
       session.send(givenEmail + ' is invalid.')
     }
     else {
@@ -489,20 +494,44 @@ const getConnName = (session) => {
   builder.Prompts.text(session, 'What\'s the name of the connector? Note: case sensitive')
 }
 
-const getConn = (session, results) => {
-  let nameOfConn = results.response
+const getConn = (session, nameOfConn, foundLight, callback) => {
   request.post('https://' + session.userData.UUID + ':' + session.userData.TOKEN + '@meshblu-http.octoblu.com/search/devices', {json: {type: 'device:hue-light'}}, (error, response, body) => {
     if (error) {
       session.send('I ran into problem finding the connector.')
     }
     let conn = _.find(body, {name: nameOfConn})
-    if (!conn) return session.send('I don\'t recognize' + nameOfConn + 'as one of your connectors')
-    session.userData.listOflights[session.dialogData.foundLight.id].uuid = conn.uuid
-    session.userData.listOflights[session.dialogData.foundLight.id].token = conn.token
+    if (!conn) return session.send('I don\'t recognize' + nameOfConn + ' as one of your connectors')
+    callback(session, conn, foundLight)
   })
 }
 
-bot.dialog('get_connector', [getLightforConn, findLight, getConnName, getConn]).triggerAction({matches: 'connect connector'})
+const setConn = (session, conn, foundLight) => {
+  session.userData.listOflights[foundLight.id].uuid = conn.uuid
+  session.userData.listOflights[foundLight.id].token = conn.token
+  let opt = {
+    method: 'PUT',
+    url: 'https://' + session.userData.UUID + ':' + session.userData.TOKEN + '@meshblu.octoblu.com/devices/' + conn.uuid,
+    json: {
+      "name": foundLight.name,
+      "desiredState": {on: foundLight === 'on'},
+      "options": {
+        "ipAddress": session.userData.bridgeInfo.internalipaddress,
+        "apiUsername": session.userData.bridgeInfo.username,
+        "lightNumber": parseInt(foundLight.id)
+      }
+    }
+  }
+  request(opt, (err, res, body) => {
+    if (err) return session.send('I ran into problem setting the connector.')
+    session.send('I successfully connected the light to connector')
+  })
+}
+
+const connectConn = (session, results) => {
+  getConn(session, results.response, session.dialogData.foundLight, setConn)
+}
+
+bot.dialog('connect_connector', [getLightforConn, findLight, getConnName, connectConn]).triggerAction({matches: 'connect connector'})
 
 const creator = (session, listOflights, callback) => {
   let after = _.after(_.size(listOflights), () => {
@@ -534,6 +563,9 @@ const creator = (session, listOflights, callback) => {
         after()
       })
     }
+    else {
+      after()
+    }
   }, (err) => {
     if (err) return callback(err)
     callback(null, session, listOflights)
@@ -549,17 +581,16 @@ const setter = (session, listOflights, callback) => {
       method: 'PUT',
       url: 'https://' + session.userData.UUID + ':' + session.userData.TOKEN + '@meshblu.octoblu.com/devices/' + eachLight.uuid,
       json: {
-        "on": eachLight.state,
+        "desiredState": {on: eachLight.state === 'on'},
         "options": {
           "ipAddress": session.userData.bridgeInfo.internalipaddress,
           "apiUsername": session.userData.bridgeInfo.username,
-          "lightNumber": eachLight.id
+          "lightNumber": parseInt(eachLight.id)
         }
       }
     }
     request(opt, (err, res, body) => {
       if (err) return callback(err)
-      console.log('body', body);
       after()
     })
   }, (err) => {
@@ -572,11 +603,12 @@ const createConn = (session) => {
   getAllLights(session, () => {
     //  TODO: Hoping that authentication w/ octoblu will return user's UUID
     //  then userUUID = session.userData.UUID
-    let listOflights = session.userData.listOflights
 
+    let apply_creator = async.apply(creator, session, session.userData.listOflights)
+    let apply_setter = async.apply(setter, session, session.userData.listOflights)
     async.waterfall([
-        creator(session, listOflights),
-        setter,
+        apply_creator,
+        apply_setter
     ], function (err, result) {
         if (err) return session.send('I ran into problem creating a connector.')
         return session.send('I have successfully created a connector for each light. You can find and download the connector(s) here https://app.octoblu.com/things/my')
@@ -597,7 +629,7 @@ const hasConn1 = (session) => {
 }
 
 const hasConn2 = (session, results) => {
-  results.response ? session.beginDialog('get_connector') : session.beginDialog('create_connector')
+  results.response ? session.beginDialog('connect_connector') : session.beginDialog('create_connector')
 }
 
 bot.dialog('set_connector', [hasConn1, hasConn2])
