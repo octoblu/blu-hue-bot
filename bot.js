@@ -12,7 +12,7 @@ const request = require('request')
 const _ = require('lodash')
 const async = require('async')
 const email_validator = require('email-validator')
-
+const recog = require('./recognizer')
 /**
 Creates a connection with botframework
 */
@@ -26,44 +26,8 @@ A new instance of the chat-bot
 */
 const bot = new UniversalBot(connector)
 
-bot.recognizer({
-  recognize: (context, done) => {
-    let intent = {score: 0.0}
-
-    if (context.message.text) {
-      switch (context.message.text.toLowerCase()) {
-        case 'hello':
-          intent = {score: 1.0, intent: 'Intro'}
-          break
-        case 'setup':
-          intent = {score: 1.0, intent: 'Setup'}
-          break
-        case 'show my lights':
-          intent = {score: 1.0, intent: 'Show Lights'}
-          break
-        case 'test':
-          intent = {score: 1.0, intent: 'Test'}
-          break;
-        case 'change light name':
-          intent = {score: 1.0, intent: 'Change Light Name'}
-          break;
-        case 'dev mode':
-          intent = {score: 1.0, intent: 'Dev Mode'}
-          break;
-        case 'switch light':
-          intent = {score: 1.0, intent: 'Switch Light'}
-          break;
-        case 'activate flow':
-          intent = {score: 1.0, intent: 'Flow'}
-        case 'connect connector':
-          intent = {score: 1.0, intent: 'connect connector'}
-          break;
-        default:
-      }
-      done(null, intent)
-    }
-  }
-})
+//  intent recognizer
+recog.recog(bot, builder, connector)
 
 /**
 currentUser is a function that is triggered when the bot is initiated. It checks if a user already exists or not and directs the bot accordingly.
@@ -300,6 +264,18 @@ const showLights = (session) => {
 
 bot.dialog('showLights', showLights).triggerAction({matches: 'Show Lights'})
 
+const getRequestLight = (session) => {
+  getAllLights(session, () => {
+    builder.Prompts.text(session, 'What\'s the name of the light you want to know about?')
+  })
+}
+
+const lightStatus = (session) => {
+  session.send(session.dialogData.foundLight.name + ' is ' + session.dialogData.foundLight.state)
+}
+
+bot.dialog('light_status', [getRequestLight, findLight, lightStatus]).triggerAction({matches: 'light status'})
+
 const discoverNewLight = (session, callback) => {
   let ipAddress = session.userData.bridgeInfo.internalipaddress
   let username = session.userData.bridgeInfo.username
@@ -406,7 +382,6 @@ const switchLight = (session) => {
   let ipAddress = session.userData.bridgeInfo.internalipaddress
   let username = session.userData.bridgeInfo.username
   let url = 'http://' + ipAddress + '/api/' + username + '/lights/' + light.id + '/state'
-  console.log('url', url)
   let options = {
     method: 'PUT',
     url: url,
@@ -416,8 +391,6 @@ const switchLight = (session) => {
   }
 
   request(options, (error, response, body) => {
-    console.log('error', error);
-    console.log('body', body);
     if (_.find(body, 'success')) {
       session.send('I have successfully switched ' + light.name + ' ' + (light.state === 'on' ? 'off' : 'on'))
     }
