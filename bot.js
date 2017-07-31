@@ -17,10 +17,9 @@ const recog = require('./recognizer')
 Creates a connection with botframework
 */
 const connector = new ChatConnector({
-  appId: 'cf720a5c-8f43-4940-82c6-92d3fddbcab1',
-  appPassword: 'U1TTm2HqWQ3N34zdEpQAqeS'
+  appId: process.env.APP_ID,
+  appPassword: process.env.APP_PASSWORD
 })
-
 /**
 A new instance of the chat-bot
 */
@@ -41,6 +40,7 @@ const currentUser = (session) => {
   }
   else if (!session.userData.bridgeInfo)
   {
+    // Make sure there's a Hue bridge to work with
     session.beginDialog('no_bridge')
   }
   else
@@ -58,6 +58,7 @@ const displayCommands = (session) => {
   session.send('Here are some commands you can try: \nYou can say \'show my lights\' or \'turn on \'light 1\'\' or \' change light name\' or \' dev mode \'')
 }
 
+// On startup, go through the introduction process
 bot.dialog('/', [currentUser, isSetupSuccessfull, displayCommands])
 
 /* SETUP */
@@ -73,6 +74,7 @@ const setUserName = (session, results, next) => {
 }
 
 const requestBridges = (session) => {
+  // find all the bridges within the current WiFi
   session.beginDialog('get_bridges')
 }
 
