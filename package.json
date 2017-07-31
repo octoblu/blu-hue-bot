@@ -2,9 +2,11 @@
   "name": "blu-hue-bot",
   "version": "1.0.0",
   "description": "A bot that can control a phillips hue through Octoblu!",
-  "main": "index.js",
+  "main": "bot.js",
   "scripts": {
-    "start": "node index.js"
+    "env": "source env.sh",
+    "index": "node bot.js",
+    "start": "npm run env && npm run index"
   },
   "repository": {
     "type": "git",
