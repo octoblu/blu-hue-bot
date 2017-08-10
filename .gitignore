@@ -38,3 +38,7 @@ jspm_packages
 
 # Holds env variables
 .env
+
+# For local testing purposes
+firebase.json
+tester.js
