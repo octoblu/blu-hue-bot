@@ -8,7 +8,13 @@ module.exports = {
             case 'hello':
               intent = {score: 1.0, intent: 'Intro'}
               break
+            case 'hi':
+              intent = {score: 1.0, intent: 'Intro'}
+              break
             case 'setup':
+              intent = {score: 1.0, intent: 'Setup'}
+              break
+            case 'set bridge up':
               intent = {score: 1.0, intent: 'Setup'}
               break
             case 'show my lights':
