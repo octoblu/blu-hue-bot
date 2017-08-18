@@ -3,7 +3,7 @@
 file=.env
 echo "Reading .env file"
 while read line; do
-  echo "Exporting: " $line
+  # echo "Exporting: " $line
   export $line;
 done < $file
 echo "Successfully exported each line"
