@@ -2,6 +2,7 @@ const builder = require('botbuilder')
 const helpers = require('../helpers');
 const request = require('request');
 const _ = require('lodash')
+const auth = require('../auth');
 
 module.exports = [
   // get light to switch
@@ -33,7 +34,10 @@ module.exports = [
       else {
         session.send('I ran into problem while switching the light. Please try again.')
       }
-      session.endDialog()
+      auth.updateUserData(session, (error, success) => {
+        if (error) return console.log(new Error(error));
+        session.endDialog()
+      })
     })
   }
 ]

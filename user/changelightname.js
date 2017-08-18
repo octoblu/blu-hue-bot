@@ -2,6 +2,7 @@ const builder = require('botbuilder')
 const helpers = require('../helpers');
 const _ = require('lodash')
 const request = require('request');
+const auth = require('../auth');
 
 module.exports = [
   // get light to change
@@ -40,7 +41,10 @@ module.exports = [
       else {
         session.send('I ran into problem while changing the name. Please try again.')
       }
-      session.endDialog()
+      auth.updateUserData(session, (error, success) => {
+        if (error) return console.log(new Error(error));
+        session.endDialog()
+      })
     })
   }
 ]

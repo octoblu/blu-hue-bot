@@ -1,5 +1,6 @@
 const builder = require('botbuilder')
 const email_validator = require('email-validator');
+const auth = require('../auth');
 
 module.exports = [
   // get octoblu email
@@ -18,7 +19,10 @@ module.exports = [
         //  TODO: authenticate email with octoblu, if failed -> create new a/c, else -> continue
         session.userData.devMode = true
         session.send('Dev Mode is activated. I need access to a Hue Light connector for each light.')
-        session.beginDialog('set_connector')
+        auth.updateUserData(session, (error, success) => {
+          if (error) return console.log(new Error(error));
+          session.beginDialog('set_connector')
+        })
       }
     })
   },

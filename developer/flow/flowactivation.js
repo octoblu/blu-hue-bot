@@ -1,5 +1,6 @@
 const builder = require('botbuilder')
-const request = require('request');
+const request = require('request')
+const auth = require('../../auth');
 
 module.exports = [
   // get flow name
@@ -19,6 +20,9 @@ module.exports = [
         id: flow['_id'],
         flowId: flow.flowId
       }
+      auth.updateUserData(session, (error, success) => {
+        if (error) return console.log(new Error(error));
+      })
     })
   },
   // activate flow

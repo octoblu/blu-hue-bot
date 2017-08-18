@@ -1,6 +1,7 @@
 const builder = require('botbuilder')
 const helpers = require('../../helpers')
-const async = require('async');
+const auth = require('../../auth')
+const async = require('async')
 
 module.exports = [
   // create connector
@@ -16,7 +17,10 @@ module.exports = [
           apply_setter
       ], function (err, result) {
           if (err) return session.send('I ran into problem creating a connector.')
-          return session.send('I have successfully created a connector for each light. You can find and download the connector(s) here https://app.octoblu.com/things/my')
+          auth.updateUserData(session, (error, success) => {
+            if (error) return console.log(new Error(error));
+            return session.send('I have successfully created a connector for each light. You can find and download the connector(s) here https://app.octoblu.com/things/my')
+          })
       });
     })
   }

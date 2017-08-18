@@ -1,3 +1,5 @@
+const auth = require('../auth');
+
 module.exports = [
   // request bridges
   (session) => {
@@ -9,7 +11,10 @@ module.exports = [
     if (results.bridge) {
       session.userData.bridgeInfo = results.bridge
       session.send('I found your bridge.')
-      session.endDialog()
+      auth.updateUserData(session, (error, success) => {
+        if (error) return console.log(new Error(error));
+        session.endDialog()
+      })
     }
     else
     {

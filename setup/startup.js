@@ -1,4 +1,5 @@
 const builder = require('botbuilder')
+const auth = require('../auth');
 
 module.exports = [
   // get user's name
@@ -7,7 +8,6 @@ module.exports = [
   },
   // set user's name
   (session, results, next) => {
-    // TODO: write to database
     session.userData.name = results.response
     session.send('Hi ' + session.userData.name + ', let\'s connect your Hue bridge.')
     next()
@@ -15,7 +15,6 @@ module.exports = [
   // request bridges
   (session) => {
     // find all the bridges within the current WiFi
-    console.log('HELL YEAH');
     session.beginDialog('get_bridges')
   },
   // Set User's Bridge
@@ -23,7 +22,10 @@ module.exports = [
     if (results.bridge) {
       session.userData.bridgeInfo = results.bridge
       session.send('I found your bridge.')
-      session.endDialog()
+      auth.updateUserData(session, (error, success) => {
+        if (error) return console.log(new Error(error));
+        session.endDialog()
+      })
     }
     else
     {

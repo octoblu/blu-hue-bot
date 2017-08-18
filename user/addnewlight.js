@@ -13,11 +13,5 @@ module.exports = [
     {
       helpers.discoverNewLight(session, helpers.getNewLights)
     }
-  },
-  // parse response
-  (session, results) => {
-    if (results.response) return session.beginDialog('setup')
-    session.send('No problem. Just say \'Setup\' when you\'re ready connect a new Hue bridge')
-    session.endDialog()
   }
 ]

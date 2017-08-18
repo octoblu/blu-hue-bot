@@ -5,15 +5,11 @@ const express = require('express')
 const app = express()
 
 module.exports = {
-  listen: (connector) => {
-    app.post('/api/messages', connector.listen())
+  index: (() => {
     app.get('/', (request, response) => {
       response.sendFile(path.join(__dirname + '/UI/index.html'))
     })
-    app.listen(3000, function () {
-      console.log('BlueHueBot listening on port 3000!')
-    })
-  },
+  })(),
   loginPage: (() => {
     app.get('/login', (request, response) => {
       auth.currentUser( (user) => {
@@ -21,12 +17,15 @@ module.exports = {
       })
     })
   })(),
-  beginChat: (() => {
+  beginChat: (connector) => {
+    app.listen(3000, function () {
+      console.log('BlueHueBot listening on port 3000!')
+    })
+    app.post('/api/messages', connector.listen())
     app.get('/chat', (request, response) => {
-      // session.beginDialog('/')
       response.sendFile(path.join(__dirname + '/UI/chat.html'))
     })
-  })(),
+  },
   prepare: (() => {
     app.use(bodyParser.json())
     app.use(bodyParser.urlencoded({ extended: true }))

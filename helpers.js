@@ -70,7 +70,7 @@ module.exports = {
   },
   getNewLights: (error, session) => {
     if (error) {
-      session.send('I ran into problem getting new lights.')
+      session.send(error)
       session.endDialog()
     }
 
@@ -91,11 +91,13 @@ module.exports = {
       //  create new connectors for new lights
       if (session.userData.devMode) session.beginDialog('create_connector')
       session.send(newLights)
-      session.endDialog()
+      auth.updateUserData(session, (error, success) => {
+        if (error) return console.log(new Error(error));
+        session.endDialog()
+      })
     })
   },
   findBridgePushed: (listOfBridges, callback) => {
-    //  call callback after _.forEach runs on each bridge
     let after = _.after(_.size(listOfBridges), () => {
       callback('None of the bridges I found was pushed.')
     })
@@ -140,6 +142,9 @@ module.exports = {
     }
     request(opt, (err, res, body) => {
       if (err) return session.send('I ran into problem setting the connector.')
+      auth.updateUserData(session, (error, success) => {
+        if (error) return console.log(new Error(error));
+      })
       session.send('I successfully connected the light to connector')
     })
   },

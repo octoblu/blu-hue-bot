@@ -39,11 +39,11 @@ const currentUser = (session) => {
   // session.userData.TOKEN = 'c64ef6296776974f56bad7f8c0e6fc7037e71703'
   auth.currentUser( (user) => {
     // force user to login/register if user doesn't exist
-    user ? auth.getUserData(user.uid, (userData) => {
+    user ? auth.getUserData(user.uid, (error, userData) => {
+      if (error) return session.send('I ran into an internal problem when getting your info from database.')
       session.userData = userData
       if (!session.userData.name) {
         // start a new chat if current user is a new user
-        console.log('HERE');
         session.beginDialog('startup')
       }
       if (!session.userData.bridgeInfo)
@@ -139,4 +139,4 @@ const test = (session) => {
 bot.dialog('test', [test]).triggerAction({matches: 'Test'})
 
 //  router
-router.listen(connector)
+router.beginChat(connector)
